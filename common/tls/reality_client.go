@@ -115,21 +115,75 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 	if err != nil {
 		return nil, err
 	}
+	var mlkemCurve, mlkemKeyShare bool
 	for _, extension := range uConn.Extensions {
-		if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
-			ce.Curves = common.Filter(ce.Curves, func(curveID utls.CurveID) bool {
-				return curveID != utls.X25519MLKEM768
-			})
-		}
-		if ks, ok := extension.(*utls.KeyShareExtension); ok {
-			ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
-				return share.Group != utls.X25519MLKEM768
+		switch ext := extension.(type) {
+		case *utls.SupportedCurvesExtension:
+			mlkemCurve = common.Contains(ext.Curves, utls.X25519MLKEM768)
+		case *utls.KeyShareExtension:
+			mlkemKeyShare = common.Any(ext.KeyShares, func(share utls.KeyShare) bool {
+				return share.Group == utls.X25519MLKEM768
 			})
 		}
 	}
-	err = uConn.BuildHandshakeState()
-	if err != nil {
-		return nil, err
+	// A group without its key share draws a HelloRetryRequest that REALITY cannot relay;
+	// a share without its group violates RFC 8446 4.2.8. Strip incomplete pairs.
+	if mlkemCurve != mlkemKeyShare {
+		for _, extension := range uConn.Extensions {
+			if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
+				ce.Curves = common.Filter(ce.Curves, func(curveID utls.CurveID) bool {
+					return curveID != utls.X25519MLKEM768
+				})
+			}
+			if ks, ok := extension.(*utls.KeyShareExtension); ok {
+				ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
+					return share.Group != utls.X25519MLKEM768
+				})
+			}
+		}
+		err = uConn.BuildHandshakeState()
+		if err != nil {
+			return nil, err
+		}
+	} else if !mlkemCurve {
+		// Xray-core v26.9.8+ REALITY servers reject ClientHellos without an X25519MLKEM768
+		// key share ahead of X25519; older fingerprints (edge, firefox) lack it entirely.
+		for _, extension := range uConn.Extensions {
+			if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
+				curves := make([]utls.CurveID, 0, len(ce.Curves)+1)
+				inserted := false
+				for _, curveID := range ce.Curves {
+					if !inserted && curveID == utls.X25519 {
+						curves = append(curves, utls.X25519MLKEM768)
+						inserted = true
+					}
+					curves = append(curves, curveID)
+				}
+				if !inserted {
+					curves = append(curves, utls.X25519MLKEM768)
+				}
+				ce.Curves = curves
+			}
+			if ks, ok := extension.(*utls.KeyShareExtension); ok {
+				keyShares := make([]utls.KeyShare, 0, len(ks.KeyShares)+1)
+				inserted := false
+				for _, share := range ks.KeyShares {
+					if !inserted && share.Group == utls.X25519 {
+						keyShares = append(keyShares, utls.KeyShare{Group: utls.X25519MLKEM768})
+						inserted = true
+					}
+					keyShares = append(keyShares, share)
+				}
+				if !inserted {
+					keyShares = append(keyShares, utls.KeyShare{Group: utls.X25519MLKEM768})
+				}
+				ks.KeyShares = keyShares
+			}
+		}
+		err = uConn.BuildHandshakeState()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if len(uConfig.NextProtos) > 0 {
