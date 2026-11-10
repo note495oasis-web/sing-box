@@ -5,7 +5,7 @@ package v2rayxhttp
 import "github.com/sagernet/sing-box/common/tls"
 
 func isRealityClient(config tls.Config) bool {
-	switch config := config.(type) {
+	switch config.(type) {
 	case *tls.RealityClientConfig:
 		return true
 	default:

@@ -24,7 +24,7 @@ func validateHTTP3() error {
 }
 
 func newHTTP3TransportFactory(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Config, options option.QUICOptions) (func() http.RoundTripper, error) {
-	stdTLSConfig, err := tlsConfig.STDConfig()
+	stdTLSConfig, err := tlsConfig.Config()
 	if err != nil {
 		return nil, E.Cause(err, "xhttp HTTP/3 requires standard TLS")
 	}
@@ -73,7 +73,7 @@ func newHTTP3QUICConfig(options option.QUICOptions) *quic.Config {
 }
 
 func (s *Server) ServePacket(listener net.PacketConn) error {
-	stdTLSConfig, err := s.tlsConfig.STDConfig()
+	stdTLSConfig, err := s.tlsConfig.Config()
 	if err != nil {
 		return E.Cause(err, "xhttp HTTP/3 requires standard TLS")
 	}
